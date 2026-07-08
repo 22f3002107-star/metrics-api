@@ -428,11 +428,17 @@ def check_rate_limit(client_id: str):
     RATE_LIMIT_STORE[client_id] = [t for t in RATE_LIMIT_STORE[client_id] if current_time - t < RATE_LIMIT_WINDOW]
     
     if len(RATE_LIMIT_STORE[client_id]) >= ASSIGNED_RATE_LIMIT:
-        # Strict Header Compliance using direct JSONResponse JSON structures
+        # Strict Header Compliance with explicit lowercase variations and full browser CORS headers
+        headers = {
+            "Retry-After": "10",
+            "retry-after": "10",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "Retry-After, retry-after"
+        }
         return JSONResponse(
             status_code=429,
             content={"detail": "Too Many Requests"},
-            headers={"Retry-After": "10", "Access-Control-Allow-Origin": "*"}
+            headers=headers
         )
     RATE_LIMIT_STORE[client_id].append(current_time)
     return None
@@ -446,7 +452,7 @@ async def create_order(
 ):
     if x_client_id:
         limit_check = check_rate_limit(x_client_id)
-        if limit_check: # Triggered strict 429 payload instantly
+        if limit_check: 
             return limit_check
 
     if idempotency_key and idempotency_key in IDEMPOTENCY_STORE:
