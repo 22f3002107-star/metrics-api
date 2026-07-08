@@ -218,6 +218,6 @@ async def get_effective_config(request: Request):
         final_output[k] = coerce_value(k, v)
 
     # Secret masking parameter validation
-    final_output["api_key"] = "*****"
+    final_output["api_key"] = "****"
     
     return final_output
