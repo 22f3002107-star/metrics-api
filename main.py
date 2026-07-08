@@ -373,6 +373,7 @@ async def extract_invoice(payload: ExtractRequest):
                 raise HTTPException(status_code=422, detail="LLM extraction failed")
                 
             res_data = response.json()
+            # FIX: [0] index add kiya gaya hai list parsing ke liye
             llm_content = res_data["choices"][0]["message"]["content"].strip()
             
             # Agar model markdown backticks use kare toh use clean karna
@@ -390,3 +391,4 @@ async def extract_invoice(payload: ExtractRequest):
             
     except Exception:
         raise HTTPException(status_code=422, detail="Unprocessable invoice formatting")
+
