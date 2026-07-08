@@ -16,6 +16,10 @@ app = FastAPI()
 EMAIL = "22f3002107@ds.study.iitm.ac.in"
 ALLOWED_ORIGIN_Q1 = "https://dash-1tn584.example.com"
 ASSIGNED_API_KEY = "ak_tmfzws5hv0d43iojh0bna2as"  # Assigned API key for analytics
+START_TIME = time.time()
+LOG_BUFFER = []
+REQUEST_COUNTER = {"http_requests_total": 0}
+
 
 # Q2 OIDC Config
 ISSUER_Q2 = "https://idp.exam.local"
@@ -67,10 +71,24 @@ class AnalyticsRequest(BaseModel):
 # ------------------------------------------
 @app.middleware("http")
 async def global_middleware_handler(request: Request, call_next):
+    # --- Q6: Prometheus Counter Increment ---
+    REQUEST_COUNTER["http_requests_total"] += 1
+    
     start_time = time.time()
     request_id = str(uuid.uuid4())
     origin = request.headers.get("origin") or request.headers.get("Origin") or ""
     path = request.url.path
+
+    # --- Q6: Structured Logging Buffer ---
+    if not path.startswith("/logs/tail"):
+        LOG_BUFFER.append({
+            "level": "INFO",
+            "ts": int(time.time()),
+            "path": path,
+            "request_id": request_id
+        })
+        if len(LOG_BUFFER) > 500:
+            LOG_BUFFER.pop(0)
 
     if request.method == "OPTIONS":
         response = Response(status_code=200)
@@ -282,3 +300,25 @@ async def post_analytics(request: AnalyticsRequest, x_api_key: Optional[str] = H
         "revenue": round(revenue, 2),  # Prevents floating point issues
         "top_user": top_user
     }
+# ==========================================
+# ENDPOINTS: QUESTION 6 (OBSERVABILITY)
+# ==========================================
+@app.get("/work")
+async def do_work(n: int = Query(...)):
+    return {"email": EMAIL, "done": n}
+
+@app.get("/metrics")
+async def get_metrics():
+    val = REQUEST_COUNTER["http_requests_total"]
+    data = f"# HELP http_requests_total Total\n# TYPE http_requests_total counter\nhttp_requests_total {val}\n"
+    return Response(content=data, media_type="text/plain")
+
+@app.get("/healthz")
+async def get_healthz():
+    return {"status": "ok", "uptime_s": float(time.time() - START_TIME)}
+
+@app.get("/logs/tail")
+async def get_logs_tail(limit: int = Query(...)):
+    return LOG_BUFFER[-limit:] if limit > 0 else []
+
+    
