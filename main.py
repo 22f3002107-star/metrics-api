@@ -88,17 +88,24 @@ class AnalyticsRequest(BaseModel):
     events: List[Event]
 
 # ------------------------------------------
-# PATH-AWARE MIDDLEWARE (CORS & SYSTEM HEADERS)
+# PATH-AWARE MIDDLEWARE (CORS, RATE-LIMIT & REQUEST CONTEXT)
 # ------------------------------------------
 @app.middleware("http")
 async def global_middleware_handler(request: Request, call_next):
-    # --- Q6: Prometheus Counter Increment ---
+    # Q6: Prometheus Counter Increment
     REQUEST_COUNTER["http_requests_total"] += 1
     
     start_time = time.time()
-    request_id = str(uuid.uuid4())
-    origin = request.headers.get("origin") or request.headers.get("Origin") or ""
     path = request.url.path
+    origin = request.headers.get("origin") or request.headers.get("Origin") or ""
+
+    # --- Q10: Request Context ID Management (Strict Echo) ---
+    request_id = request.headers.get("X-Request-ID") or request.headers.get("x-request-id")
+    if not request_id:
+        request_id = str(uuid.uuid4())
+
+    # State proxy par append karein taaki route controller ise read kar sake
+    request.state.request_id = request_id
 
     # --- Q6: Structured Logging Buffer ---
     if not path.startswith("/logs/tail"):
@@ -111,8 +118,34 @@ async def global_middleware_handler(request: Request, call_next):
         if len(LOG_BUFFER) > 500:
             LOG_BUFFER.pop(0)
 
+    # --- Q10: Per-Client Rate Limiter for /ping ---
+    if path == "/ping":
+        client_id = request.headers.get("X-Client-Id") or request.headers.get("x-client-id")
+        if client_id:
+            current_time = time.time()
+            if client_id not in RATE_LIMIT_STORE_Q10:
+                RATE_LIMIT_STORE_Q10[client_id] = []
+            
+            # 10 seconds window filters
+            RATE_LIMIT_STORE_Q10[client_id] = [t for t in RATE_LIMIT_STORE_Q10[client_id] if current_time - t < 10.0]
+            
+            if len(RATE_LIMIT_STORE_Q10[client_id]) >= ASSIGNED_LIMIT_Q10:
+                headers = {
+                    "X-Request-ID": request_id,
+                    "x-request-id": request_id,
+                    "Access-Control-Expose-Headers": "X-Request-ID, x-request-id"
+                }
+                if origin in [ALLOWED_ORIGIN_Q10, EXAM_ORIGIN_Q10]:
+                    headers["Access-Control-Allow-Origin"] = origin
+                return JSONResponse(status_code=429, content={"detail": "Too Many Requests"}, headers=headers)
+            
+            RATE_LIMIT_STORE_Q10[client_id].append(current_time)
+
+    # --- OPTIONS Preflight Requests Processing ---
     if request.method == "OPTIONS":
         response = Response(status_code=200)
+        response.headers["X-Request-ID"] = request_id
+        
         if path.startswith("/stats"):
             if origin == ALLOWED_ORIGIN_Q1:
                 response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
@@ -121,27 +154,40 @@ async def global_middleware_handler(request: Request, call_next):
             else:
                 response.status_code = 400
                 return response
+        elif path == "/ping":
+            if origin in [ALLOWED_ORIGIN_Q10, EXAM_ORIGIN_Q10]:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "X-Request-ID, X-Client-Id, Content-Type"
         else:
             response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
         
         process_time = time.time() - start_time
-        response.headers["X-Request-ID"] = request_id
         response.headers["X-Process-Time"] = f"{process_time:.6f}"
         return response
 
+    # Process Application Routes
     response = await call_next(request)
+    
+    # Required response headers injection
+    response.headers["X-Request-ID"] = request_id
+    response.headers["x-request-id"] = request_id
+    response.headers["Access-Control-Expose-Headers"] = "X-Request-ID, x-request-id"
+
+    # --- Scoped CORS Policies Configurations ---
     if path.startswith("/stats"):
         if origin == ALLOWED_ORIGIN_Q1:
             response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
+    elif path == "/ping":
+        if origin in [ALLOWED_ORIGIN_Q10, EXAM_ORIGIN_Q10]:
+            response.headers["Access-Control-Allow-Origin"] = origin
     else:
         response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
 
     process_time = time.time() - start_time
-    response.headers["X-Request-ID"] = request_id
     response.headers["X-Process-Time"] = f"{process_time:.6f}"
-    
     return response
 
 # ------------------------------------------
