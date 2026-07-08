@@ -33,6 +33,13 @@ ORDERS_CATALOG = [
 IDEMPOTENCY_STORE = {}  # {key: {"id": order_id, "response": data}}
 RATE_LIMIT_STORE = {}   # {client_id: [timestamps]}
 
+# --- GLOBAL VARIABLES FOR QUESTION 10 ---
+ALLOWED_ORIGIN_Q10 = "https://app-u76lvv.example.com"
+EXAM_ORIGIN_Q10 = "https://workers.dev"
+ASSIGNED_LIMIT_Q10 = 14
+RATE_LIMIT_STORE_Q10 = {} # {client_id: [timestamps]}
+
+
 
 
 # Q2 OIDC Config
@@ -501,3 +508,16 @@ async def get_orders(
         "items": sliced_items,
         "next_cursor": next_cursor
     }
+
+# ==========================================
+# ENDPOINT: QUESTION 10 (GET /ping WITH CONTEXT)
+# ==========================================
+@app.get("/ping")
+async def get_ping(request: Request):
+    # Middleware dwara generate ki gayi request_id fetch karein
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    return {
+        "email": EMAIL,
+        "request_id": request_id
+    }
+
