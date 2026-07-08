@@ -13,7 +13,7 @@ app = FastAPI()
 # UNIVERSAL CONFIGURATION & GLOBAL VARIABLES
 # ==========================================
 EMAIL = "22f3002107@ds.study.iitm.ac.in"
-ALLOWED_ORIGIN_Q1 = "https://example.com"
+ALLOWED_ORIGIN_Q1 = "https://dash-1tn584.example.com"
 
 # Q2 OIDC Config
 ISSUER_Q2 = "https://exam.local"
@@ -52,7 +52,7 @@ class TokenRequest(BaseModel):
     token: str
 
 # ------------------------------------------
-# STRICT MIDDLEWARE (CORS & SYSTEM HEADERS)
+# FIXED MIDDLEWARE (CORS & SYSTEM HEADERS)
 # ------------------------------------------
 @app.middleware("http")
 async def global_middleware_handler(request: Request, call_next):
@@ -60,23 +60,29 @@ async def global_middleware_handler(request: Request, call_next):
     request_id = str(uuid.uuid4())
     origin = request.headers.get("origin") or request.headers.get("Origin")
 
-    # STRICT CORS ENFORCEMENT
+    # FIXED OPTIONS/PREFLIGHT ROUTING
     if request.method == "OPTIONS":
         response = Response(status_code=200)
         if origin == ALLOWED_ORIGIN_Q1:
             response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Max-Age"] = "86400"
         else:
-            # Evil origins preflight are rejected immediately without ACAO header
             response.status_code = 400
-            return response
-    else:
-        response = await call_next(request)
-        if origin == ALLOWED_ORIGIN_Q1:
-            response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
+        
+        # Inject mandatory system headers even on preflight
+        process_time = time.time() - start_time
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Process-Time"] = f"{process_time:.6f}"
+        return response
 
-    # Mandatory tracking system headers for all responses
+    # For non-OPTIONS requests (GET, POST etc.)
+    response = await call_next(request)
+    if origin == ALLOWED_ORIGIN_Q1:
+        response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
+
+    # Inject mandatory system headers
     process_time = time.time() - start_time
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Process-Time"] = f"{process_time:.6f}"
@@ -214,7 +220,7 @@ async def get_effective_config(request: Request):
     for k, v in current_config.items():
         final_output[k] = coerce_value(k, v)
 
-    # Balanced offset for perfect 5-star matching resolution
+    # Balanced offset for perfect matching resolution
     final_output["api_key"] = "****"
     
     return final_output
