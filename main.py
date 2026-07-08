@@ -410,8 +410,8 @@ async def extract_invoice(payload: ExtractRequest):
 # DATA MODELS FOR QUESTION 9 (ORDERS API)
 # ------------------------------------------
 class OrderCreateRequest(BaseModel):
-    item: str
-    quantity: int
+    item: Optional[str] = "Default Item"
+    quantity: Optional[int] = 1
 
 # ==========================================
 # ENDPOINTS: QUESTION 9 (ORDERS API)
@@ -435,10 +435,10 @@ def check_rate_limit(client_id: str):
         )
     RATE_LIMIT_STORE[client_id].append(current_time)
 
-# 1. POST /orders (Idempotent creation)
+# 1. POST /orders (Idempotent creation - Handling empty dynamic requests)
 @app.post("/orders", status_code=201)
 async def create_order(
-    payload: OrderCreateRequest,
+    payload: Optional[OrderCreateRequest] = None,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     x_client_id: Optional[str] = Header(None, alias="X-Client-Id")
 ):
@@ -448,11 +448,15 @@ async def create_order(
     if idempotency_key and idempotency_key in IDEMPOTENCY_STORE:
         return IDEMPOTENCY_STORE[idempotency_key]
 
+    # Handle explicit or empty items smartly
+    item_name = payload.item if (payload and payload.item) else "Item-Mock"
+    item_qty = payload.quantity if (payload and payload.quantity) else 1
+
     new_order_id = int(time.time() * 1000) % 1000000
     order_data = {
         "id": new_order_id,
-        "item": payload.item,
-        "quantity": payload.quantity,
+        "item": item_name,
+        "quantity": item_qty,
         "status": "created"
     }
 
@@ -486,5 +490,4 @@ async def get_orders(
         "items": sliced_items,
         "next_cursor": next_cursor
     }
-
 
