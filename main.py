@@ -320,5 +320,73 @@ async def get_healthz():
 @app.get("/logs/tail")
 async def get_logs_tail(limit: int = Query(...)):
     return LOG_BUFFER[-limit:] if limit > 0 else []
+# ==========================================
+# DATA MODELS FOR QUESTION 8 (EXTRACTION)
+# ==========================================
+class ExtractRequest(BaseModel):
+    text: str
 
-    
+class InvoiceResponse(BaseModel):
+    vendor: str
+    amount: float
+    currency: str
+    date: str
+
+# ==========================================
+# ENDPOINT: QUESTION 8 (POST /extract)
+# ==========================================
+import httpx
+import json
+
+@app.post("/extract", response_model=InvoiceResponse)
+async def extract_invoice(payload: ExtractRequest):
+    if not payload.text or len(payload.text.strip()) < 5:
+        raise HTTPException(status_code=422, detail="Invalid text input")
+
+    # Strict Zero-Temperature Prompt taaki Llama sirf raw structured JSON de
+    system_instruction = (
+        "You are a strict data extraction tool. Extract fields from the invoice text. "
+        "Respond ONLY with a valid JSON object matching this schema exactly:\n"
+        '{"vendor": "string", "amount": number, "currency": "3-letter uppercase string", "date": "YYYY-MM-DD"}\n'
+        "Do not include markdown blocks, backticks, or any conversational text. Only raw JSON."
+    )
+
+    # CONNECTING RENDER TO YOUR LAPTOP VIA NGROK TUNNEL
+    TUNNEL_URL = "https://ngrok-free.app"
+
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(
+                TUNNEL_URL,
+                json={
+                    "model": "llama3.2",
+                    "messages": [
+                        {"role": "system", "content": system_instruction},
+                        {"role": "user", "content": payload.text}
+                    ],
+                    "temperature": 0.0,
+                    "stream": False
+                }
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=422, detail="LLM extraction failed")
+                
+            res_data = response.json()
+            llm_content = res_data["choices"][0]["message"]["content"].strip()
+            
+            # Agar model markdown backticks use kare toh use clean karna
+            if llm_content.startswith("```"):
+                llm_content = llm_content.strip("`").replace("json", "", 1).strip()
+            
+            extracted_json = json.loads(llm_content)
+            
+            return InvoiceResponse(
+                vendor=str(extracted_json.get("vendor", "Unknown")),
+                amount=float(extracted_json.get("amount", 0.0)),
+                currency=str(extracted_json.get("currency", "USD")).upper(),
+                date=str(extracted_json.get("date", "2026-01-01"))
+            )
+            
+    except Exception:
+        raise HTTPException(status_code=422, detail="Unprocessable invoice formatting")
