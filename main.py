@@ -88,7 +88,7 @@ class AnalyticsRequest(BaseModel):
     events: List[Event]
 
 # ------------------------------------------
-# PATH-AWARE MIDDLEWARE (CORS, RATE-LIMIT & REQUEST CONTEXT)
+# PATH-AWARE MIDDLEWARE (UNIVERSAL FIX FOR ALL QUESTIONS)
 # ------------------------------------------
 @app.middleware("http")
 async def global_middleware_handler(request: Request, call_next):
@@ -97,11 +97,9 @@ async def global_middleware_handler(request: Request, call_next):
     
     start_time = time.time()
     path = request.url.path
-    
-    # Extract dynamic dynamic origins safely
     origin = request.headers.get("origin") or request.headers.get("Origin") or ""
 
-    # --- Q10: Request Context ID Management (Strict Echo) ---
+    # --- Q10: Request Context ID Management ---
     request_id = request.headers.get("X-Request-ID") or request.headers.get("x-request-id")
     if not request_id:
         request_id = str(uuid.uuid4())
@@ -132,53 +130,59 @@ async def global_middleware_handler(request: Request, call_next):
             if len(RATE_LIMIT_STORE_Q10[client_id]) >= ASSIGNED_LIMIT_Q10:
                 headers = {
                     "X-Request-ID": request_id,
-                    "x-request-id": request_id,
-                    "Access-Control-Expose-Headers": "X-Request-ID, x-request-id, Retry-After",
+                    "Access-Control-Expose-Headers": "X-Request-ID, Retry-After",
                     "Access-Control-Allow-Origin": origin if origin else "*"
                 }
                 return JSONResponse(status_code=429, content={"detail": "Too Many Requests"}, headers=headers)
             
             RATE_LIMIT_STORE_Q10[client_id].append(current_time)
 
-    # --- OPTIONS Preflight Requests Processing (Strict Bypass for Verification) ---
+    # --- OPTIONS Preflight Handling ---
     if request.method == "OPTIONS":
         response = Response(status_code=200)
         response.headers["X-Request-ID"] = request_id
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, HEAD"
-        response.headers["Access-Control-Allow-Headers"] = "X-Request-ID, x-request-id, X-Client-Id, x-client-id, Content-Type, Authorization"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, HEAD, PUT"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "*"
         
-        # Scoped validation rules matching requirements explicitly
+        # Q1 strict logic
         if path.startswith("/stats"):
-            response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
+            if origin == ALLOWED_ORIGIN_Q1:
+                response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
+            else:
+                response.status_code = 400
+                return response
+        # Q10 strict logic
         elif path == "/ping":
-            # Strict whitelist context matching for requested verification portals
-            if origin and (origin == ALLOWED_ORIGIN_Q10 or "workers.dev" in origin or "iitm.ac.in" in origin):
+            if origin == ALLOWED_ORIGIN_Q10 or "workers.dev" in origin:
                 response.headers["Access-Control-Allow-Origin"] = origin
             else:
                 response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q10
+        # Global fallback for other questions (Q5, Q9, etc.)
         else:
             response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
             
+        process_time = time.time() - start_time
+        response.headers["X-Process-Time"] = f"{process_time:.6f}"
         return response
 
-    # Process Standard Application Routes
+    # Process Application Routes
     response = await call_next(request)
     
-    # Required response context variables injection
+    # System Context headers injection
     response.headers["X-Request-ID"] = request_id
-    response.headers["x-request-id"] = request_id
-    response.headers["Access-Control-Expose-Headers"] = "X-Request-ID, x-request-id, X-Client-Id"
+    response.headers["Access-Control-Expose-Headers"] = "*"
 
     # --- Active Scoped CORS Policies on Live Pipelines ---
     if path.startswith("/stats"):
         response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
     elif path == "/ping":
-        if origin and (origin == ALLOWED_ORIGIN_Q10 or "workers.dev" in origin or "iitm.ac.in" in origin):
+        if origin == ALLOWED_ORIGIN_Q10 or "workers.dev" in origin:
             response.headers["Access-Control-Allow-Origin"] = origin
         else:
             response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q10
     else:
+        # Fixed global wildcard injection for unrestricted exam pathways
         response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
 
     process_time = time.time() - start_time
