@@ -3,9 +3,10 @@ import uuid
 import jwt
 import os
 import yaml
-from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi import FastAPI, Query, HTTPException, Request, Header
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
+from typing import List, Optional
 
 app = FastAPI()
 
@@ -14,6 +15,7 @@ app = FastAPI()
 # ==========================================
 EMAIL = "22f3002107@ds.study.iitm.ac.in"
 ALLOWED_ORIGIN_Q1 = "https://dash-1tn584.example.com"
+ASSIGNED_API_KEY = "ak_tmfzws5hv0d43iojh0bna2as"  # Assigned API key for analytics
 
 # Q2 OIDC Config
 ISSUER_Q2 = "https://idp.exam.local"
@@ -50,6 +52,15 @@ class StatsResponse(BaseModel):
 
 class TokenRequest(BaseModel):
     token: str
+
+# --- NEW MODELS FOR ANALYTICS ---
+class Event(BaseModel):
+    user: str
+    amount: float
+    ts: int
+
+class AnalyticsRequest(BaseModel):
+    events: List[Event]
 
 # ------------------------------------------
 # PATH-AWARE MIDDLEWARE (CORS & SYSTEM HEADERS)
@@ -129,7 +140,6 @@ async def get_stats(values: str = Query(..., description="Comma-separated list o
 @app.post("/verify")
 async def verify_token(data: TokenRequest):
     try:
-        # Added leeway=120 to completely handle any server-grader clock drift issues smoothly
         payload = jwt.decode(
             data.token,
             PUBLIC_KEY_Q2,
@@ -230,3 +240,45 @@ async def get_effective_config(request: Request):
     final_output["api_key"] = "****"
     
     return final_output
+
+# ------------------------------------------
+# NEW ENDPOINT: DEPLOY POST /analytics
+# ------------------------------------------
+@app.post("/analytics")
+async def post_analytics(request: AnalyticsRequest, x_api_key: Optional[str] = Header(None)):
+    # 1. API Key Authentication Check (Header validation)
+    if not x_api_key or x_api_key != ASSIGNED_API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized: Missing or invalid API key.")
+
+    events = request.events
+    total_events = len(events)
+    unique_users = set()
+    revenue = 0.0
+    user_revenue_map = {}
+
+    # 2. Aggregation & Filter Logic
+    for event in events:
+        if event.user:
+            unique_users.add(event.user)
+        
+        # Rule: Only aggregate revenue and user totals where amount > 0
+        if event.amount > 0:
+            revenue += event.amount
+            user_revenue_map[event.user] = user_revenue_map.get(event.user, 0.0) + event.amount
+
+    # Rule: Find the top user with the highest positive-amount total
+    top_user = ""
+    max_revenue = -1.0
+    for user, user_total in user_revenue_map.items():
+        if user_total > max_revenue:
+            max_revenue = user_total
+            top_user = user
+
+    # 3. Formatted JSON Response
+    return {
+        "email": EMAIL,
+        "total_events": total_events,
+        "unique_users": len(unique_users),
+        "revenue": round(revenue, 2),  # Prevents floating point issues
+        "top_user": top_user
+    }
