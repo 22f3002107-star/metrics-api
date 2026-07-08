@@ -19,6 +19,20 @@ ASSIGNED_API_KEY = "ak_tmfzws5hv0d43iojh0bna2as"  # Assigned API key for analyti
 START_TIME = time.time()
 LOG_BUFFER = []
 REQUEST_COUNTER = {"http_requests_total": 0}
+# --- GLOBAL VARIABLES FOR QUESTION 9 ---
+TOTAL_ORDERS = 45
+ASSIGNED_RATE_LIMIT = 18
+RATE_LIMIT_WINDOW = 10.0
+
+# Fixed orders catalog generate karein (1 to 45)
+ORDERS_CATALOG = [
+    {"id": i, "item": f"Item-{i}", "quantity": (i * 3) % 10 + 1}
+    for i in range(1, TOTAL_ORDERS + 1)
+]
+
+IDEMPOTENCY_STORE = {}  # {key: {"id": order_id, "response": data}}
+RATE_LIMIT_STORE = {}   # {client_id: [timestamps]}
+
 
 
 # Q2 OIDC Config
@@ -391,4 +405,86 @@ async def extract_invoice(payload: ExtractRequest):
             
     except Exception:
         raise HTTPException(status_code=422, detail="Unprocessable invoice formatting")
+
+# ------------------------------------------
+# DATA MODELS FOR QUESTION 9 (ORDERS API)
+# ------------------------------------------
+class OrderCreateRequest(BaseModel):
+    item: str
+    quantity: int
+
+# ==========================================
+# ENDPOINTS: QUESTION 9 (ORDERS API)
+# ==========================================
+
+def check_rate_limit(client_id: str):
+    if not client_id:
+        return
+    current_time = time.time()
+    if client_id not in RATE_LIMIT_STORE:
+        RATE_LIMIT_STORE[client_id] = []
+    
+    # 10 seconds se purane records ko saaf karein
+    RATE_LIMIT_STORE[client_id] = [t for t in RATE_LIMIT_STORE[client_id] if current_time - t < RATE_LIMIT_WINDOW]
+    
+    if len(RATE_LIMIT_STORE[client_id]) >= ASSIGNED_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="Too Many Requests",
+            headers={"Retry-After": "10"}
+        )
+    RATE_LIMIT_STORE[client_id].append(current_time)
+
+# 1. POST /orders (Idempotent creation)
+@app.post("/orders", status_code=201)
+async def create_order(
+    payload: OrderCreateRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_client_id: Optional[str] = Header(None, alias="X-Client-Id")
+):
+    if x_client_id:
+        check_rate_limit(x_client_id)
+
+    if idempotency_key and idempotency_key in IDEMPOTENCY_STORE:
+        return IDEMPOTENCY_STORE[idempotency_key]
+
+    new_order_id = int(time.time() * 1000) % 1000000
+    order_data = {
+        "id": new_order_id,
+        "item": payload.item,
+        "quantity": payload.quantity,
+        "status": "created"
+    }
+
+    if idempotency_key:
+        IDEMPOTENCY_STORE[idempotency_key] = order_data
+
+    return order_data
+
+# 2. GET /orders (Cursor-based Pagination)
+@app.get("/orders")
+async def get_orders(
+    limit: int = Query(10, ge=1),
+    cursor: Optional[str] = Query(None),
+    x_client_id: Optional[str] = Header(None, alias="X-Client-Id")
+):
+    if x_client_id:
+        check_rate_limit(x_client_id)
+
+    start_index = 0
+    if cursor:
+        try:
+            start_index = int(cursor)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+
+    sliced_items = ORDERS_CATALOG[start_index : start_index + limit]
+    next_index = start_index + len(sliced_items)
+    next_cursor = str(next_index) if next_index < TOTAL_ORDERS else None
+
+    return {
+        "items": sliced_items,
+        "next_cursor": next_cursor
+    }
+
 
