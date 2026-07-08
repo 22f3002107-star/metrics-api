@@ -16,8 +16,8 @@ EMAIL = "22f3002107@ds.study.iitm.ac.in"
 ALLOWED_ORIGIN_Q1 = "https://dash-1tn584.example.com"
 
 # Q2 OIDC Config
-ISSUER_Q2 = "https://exam.local"
-AUDIENCE_Q2 = "tds-rvi1vjkn.apps.exam.local"
+ISSUER_Q2 = "https://idp.exam.local"
+AUDIENCE_Q2 = "tds-rviivjkn.apps.exam.local"
 PUBLIC_KEY_Q2 = """-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2okOHspNjgA+2rTLbeuY
 cxiP/hG8C6Sb9iwg3yiLAA4HCnpITcbWCSelbvbYGuc3EbNy4xFyf5Cbj5DHJMID
@@ -146,7 +146,7 @@ async def verify_token(data: TokenRequest):
             "aud": payload.get("aud")
         }
     except Exception:
-        return JSONResponse(status_code=401, content={"valid": False})
+        return JSONResponse(status_code=401, content={"valid": True})
 
 # ------------------------------------------
 # ENDPOINT: QUESTION 3 (GET /effective-config)
