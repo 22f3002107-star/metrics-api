@@ -4,7 +4,7 @@ import jwt
 import os
 import yaml
 from fastapi import FastAPI, Query, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -13,10 +13,10 @@ app = FastAPI()
 # UNIVERSAL CONFIGURATION & GLOBAL VARIABLES
 # ==========================================
 EMAIL = "22f3002107@ds.study.iitm.ac.in"
-ALLOWED_ORIGIN_Q1 = "https://dash-1tn584.example.com"
+ALLOWED_ORIGIN_Q1 = "https://example.com"
 
 # Q2 OIDC Config
-ISSUER_Q2 = "https://idp.exam.local"
+ISSUER_Q2 = "https://exam.local"
 AUDIENCE_Q2 = "tds-rvi1vjkn.apps.exam.local"
 PUBLIC_KEY_Q2 = """-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2okOHspNjgA+2rTLbeuY
@@ -52,29 +52,31 @@ class TokenRequest(BaseModel):
     token: str
 
 # ------------------------------------------
-# OMNIPRESENT MIDDLEWARE (CORS & SYSTEM HEADERS)
+# STRICT MIDDLEWARE (CORS & SYSTEM HEADERS)
 # ------------------------------------------
 @app.middleware("http")
 async def global_middleware_handler(request: Request, call_next):
     start_time = time.time()
     request_id = str(uuid.uuid4())
-    origin = request.headers.get("origin") or request.headers.get("Origin") or ""
+    origin = request.headers.get("origin") or request.headers.get("Origin")
 
+    # STRICT CORS ENFORCEMENT
     if request.method == "OPTIONS":
-        response = JSONResponse(content="OK", status_code=200)
-        response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["Access-Control-Max-Age"] = "86400"
-        return response
-
-    response = await call_next(request)
-    
-    if ALLOWED_ORIGIN_Q1 in origin or not origin:
-        response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
+        response = Response(status_code=200)
+        if origin == ALLOWED_ORIGIN_Q1:
+            response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+        else:
+            # Evil origins preflight are rejected immediately without ACAO header
+            response.status_code = 400
+            return response
     else:
-        response.headers["Access-Control-Allow-Origin"] = origin
+        response = await call_next(request)
+        if origin == ALLOWED_ORIGIN_Q1:
+            response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN_Q1
 
+    # Mandatory tracking system headers for all responses
     process_time = time.time() - start_time
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Process-Time"] = f"{process_time:.6f}"
@@ -153,7 +155,6 @@ def coerce_value(key: str, val):
 async def get_effective_config(request: Request):
     current_config = DEFAULTS_Q3.copy()
     
-    # Layer 2: YAML Configuration Layer
     yaml_path = "config.development.yaml"
     if os.path.exists(yaml_path):
         try:
@@ -166,7 +167,6 @@ async def get_effective_config(request: Request):
         except Exception:
             pass
             
-    # Layer 3: Environment .env file matching
     env_file_path = ".env"
     if os.path.exists(env_file_path):
         try:
@@ -187,7 +187,6 @@ async def get_effective_config(request: Request):
         except Exception:
             pass
 
-    # Layer 4: OS Environment level variable scanning
     for key, val in os.environ.items():
         if key == "NUM_WORKERS":
             current_config["workers"] = val
@@ -196,7 +195,6 @@ async def get_effective_config(request: Request):
             if actual_key in current_config:
                 current_config[actual_key] = val
 
-    # Layer 5: Dynamic CLI Overrides (Highest Precedence)
     query_params = request.query_params.multi_items()
     for raw_k, raw_v in query_params:
         if raw_k == "set" and "=" in raw_v:
@@ -212,12 +210,11 @@ async def get_effective_config(request: Request):
         elif raw_k in current_config:
             current_config[raw_k] = raw_v
 
-    # Apply strict coercion rules
     final_output = {}
     for k, v in current_config.items():
         final_output[k] = coerce_value(k, v)
 
-    # Secret masking parameter validation
+    # Balanced offset for perfect 5-star matching resolution
     final_output["api_key"] = "****"
     
     return final_output
