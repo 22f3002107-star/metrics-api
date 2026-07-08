@@ -419,7 +419,7 @@ class OrderCreateRequest(BaseModel):
 
 def check_rate_limit(client_id: str):
     if not client_id:
-        return
+        return None
     current_time = time.time()
     if client_id not in RATE_LIMIT_STORE:
         RATE_LIMIT_STORE[client_id] = []
@@ -428,14 +428,16 @@ def check_rate_limit(client_id: str):
     RATE_LIMIT_STORE[client_id] = [t for t in RATE_LIMIT_STORE[client_id] if current_time - t < RATE_LIMIT_WINDOW]
     
     if len(RATE_LIMIT_STORE[client_id]) >= ASSIGNED_RATE_LIMIT:
-        raise HTTPException(
+        # Strict Header Compliance using direct JSONResponse JSON structures
+        return JSONResponse(
             status_code=429,
-            detail="Too Many Requests",
-            headers={"Retry-After": "10"}
+            content={"detail": "Too Many Requests"},
+            headers={"Retry-After": "10", "Access-Control-Allow-Origin": "*"}
         )
     RATE_LIMIT_STORE[client_id].append(current_time)
+    return None
 
-# 1. POST /orders (Idempotent creation - Handling empty dynamic requests)
+# 1. POST /orders (Idempotent creation)
 @app.post("/orders", status_code=201)
 async def create_order(
     payload: Optional[OrderCreateRequest] = None,
@@ -443,12 +445,13 @@ async def create_order(
     x_client_id: Optional[str] = Header(None, alias="X-Client-Id")
 ):
     if x_client_id:
-        check_rate_limit(x_client_id)
+        limit_check = check_rate_limit(x_client_id)
+        if limit_check: # Triggered strict 429 payload instantly
+            return limit_check
 
     if idempotency_key and idempotency_key in IDEMPOTENCY_STORE:
         return IDEMPOTENCY_STORE[idempotency_key]
 
-    # Handle explicit or empty items smartly
     item_name = payload.item if (payload and payload.item) else "Item-Mock"
     item_qty = payload.quantity if (payload and payload.quantity) else 1
 
@@ -473,7 +476,9 @@ async def get_orders(
     x_client_id: Optional[str] = Header(None, alias="X-Client-Id")
 ):
     if x_client_id:
-        check_rate_limit(x_client_id)
+        limit_check = check_rate_limit(x_client_id)
+        if limit_check:
+            return limit_check
 
     start_index = 0
     if cursor:
@@ -490,4 +495,3 @@ async def get_orders(
         "items": sliced_items,
         "next_cursor": next_cursor
     }
-
